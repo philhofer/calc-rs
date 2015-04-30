@@ -1,0 +1,5 @@
+[package]
+
+name = "calc"
+version = "0.0.1"
+authors = ["philhofer <phofer@umich.edu>"]
