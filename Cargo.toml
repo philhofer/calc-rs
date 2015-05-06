@@ -3,3 +3,17 @@
 name = "calc"
 version = "0.0.1"
 authors = ["philhofer <phofer@umich.edu>"]
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
