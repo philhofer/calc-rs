@@ -1,6 +1,6 @@
-//! stuff
-//!
-//!
+//! The `calculus` module contains utilities
+//! for performing integration and differentiation.
+//! 
 use std::f64;
 
 /// `UnivariateFn` is a function that 
@@ -39,6 +39,14 @@ fn fa2<T: UnivariateFn>(f: &T, x: f64, h: f64) -> f64 {
 /// Calculates the derivative of the input function at the point
 /// `x`. Returns `None` if the derivative is not numerically stable,
 /// or if `x` is `NAN` or infinite.
+///
+/// # Example
+/// ```
+/// use calc::calculus::*;
+/// 
+/// // the derivative of x^2 at 1 is 2
+/// assert!((diff(&|x: f64| x*x, 1f64).unwrap() - 2f64).abs() < 1e-7f64);
+/// ```
 pub fn diff<T: UnivariateFn>(f: &T, x: f64) -> Option<f64> {
 	if x.is_nan() || x.is_infinite() {
 		return None;
@@ -121,6 +129,14 @@ pub fn quad_fast<T: UnivariateFn>(f: &T, a: f64, b: f64) -> f64 {
 /// approximated by polynomials, this quadrature is
 /// extremely accurate. However, it may not be accurate
 /// for poorly-behaved functions.
+///
+/// # Example
+/// ```
+/// use calc::calculus::*;
+///
+/// // the integral of x^2 from 0 to 2 is 8/3
+/// assert!((quad_slow(&|x: f64| x*x, 0f64, 2f64) - 8f64/3f64).abs() < 1e-7f64);
+/// ```
 pub fn quad_slow<T: UnivariateFn>(f: &T, a: f64, b: f64) -> f64 {
 	quad!(GAUSS_TAB_25, f, a, b)
 }
@@ -191,18 +207,13 @@ pub struct BoundsTransform<'a, T: 'a> {
 /// can integrate the given function over non-finite
 /// bounds.
 ///
-/// # Examples
+/// # Example
 /// ```
-/// use calc::*;
+/// use calc::calculus::*;
 /// use std::f64;
-///
-/// struct Exp;
-/// impl UnivariateFn for Exp {
-///		fn eval(&self, x: f64) -> f64 { (-x).exp() }
-/// }
 /// 
 /// // the integral of e^(-x) from 0 to infinity is 1
-/// assert!((transform_bounds(&Exp).quad_slow(0f64, f64::INFINITY) - 1f64).abs() < 1e-8f64);
+/// assert!((transform_bounds(&|x: f64| (-x).exp()).quad_slow(0f64, f64::INFINITY) - 1f64).abs() < 1e-8f64);
 /// ```
 pub fn transform_bounds<'a, T: UnivariateFn>(f: &'a T) -> BoundsTransform<'a, T> {
 	BoundsTransform{ child: f }
