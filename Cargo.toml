@@ -4,7 +4,7 @@ name = "calc"
 version = "0.0.1"
 authors = ["philhofer <phofer@umich.edu>"]
 
-keywords = ["math", "numerics"]
+keywords = ["math", "numerics", "numerical methods", "statistics"]
 license = "MIT"
 
 [profile.release]

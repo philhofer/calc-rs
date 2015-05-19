@@ -1,18 +1,17 @@
 //! The `calculus` module contains utilities
-//! for performing integration and differentiation.
-//! 
+//! for performing integration, differentiation,
+//! and root-finding.
 use std::f64;
 
 /// `UnivariateFn` is a function that 
 /// takes one `f64` and returns another.
-/// `eval` must always return the same
-/// value for a given input.
+/// Its implementors are assumed to be
+/// analytic functions in `x`.
 pub trait UnivariateFn {
 	fn eval(&self, x: f64) -> f64;
 }
 
-/// Univariate functions/closures of type
-/// `fn(f64)->f64` implicitly implement `UnivariateFn`.
+/// `fn(f64)->f64` implicitly implements `UnivariateFn`.
 impl<T> UnivariateFn for T where T: Fn(f64) -> f64 {
 	#[inline]
 	fn eval(&self, x: f64) -> f64 { self(x) }
@@ -44,6 +43,9 @@ fn fa2<T: UnivariateFn>(f: &T, x: f64, h: f64) -> f64 {
 /// ```
 /// use calc::calculus::*;
 /// 
+/// // the derivative of 1 is zero
+/// assert!(diff(&|_: f64| 1f64, 1f64).unwrap().abs() < 1e-7f64);
+///
 /// // the derivative of x^2 at 1 is 2
 /// assert!((diff(&|x: f64| x*x, 1f64).unwrap() - 2f64).abs() < 1e-7f64);
 /// ```
@@ -234,7 +236,6 @@ impl<'a, T> UnivariateFn for BoundsTransform<'a, T> where T: UnivariateFn {
 	}
 }
 
-#[inline]
 fn btrans(a: f64, b: f64) -> (f64, f64) {
 	(match a {
 		0f64 => 0f64,
@@ -287,7 +288,14 @@ impl<'a, T> BoundsTransform<'a, T> where T: 'a + UnivariateFn {
 
 }
 
-/*
+macro_rules! swap {
+	($a:expr, $b:expr) => {{
+		let tmp = $a;
+		$a = $b;
+		$b = tmp;
+	}};
+}
+
 // reverse-quadratic interpolation
 fn rev_quadratic<T: UnivariateFn>(f: &T, a: f64, b: f64, c: f64) -> f64 {
 	let fa = f.eval(a);
@@ -320,9 +328,24 @@ fn check_converge(a: f64, b: f64, c: f64, d: f64, s: f64, flag: bool) -> bool {
 /// This function asserts that `f.eval(min)` and `f.eval(max)` have
 /// opposite signs, and that `acc` is greater than zero. `min` and `max`
 /// are simply bounds on the search space of the function.
+///
+/// # Example
+/// ```
+/// use calc::calculus::*;
+///
+/// // the root of x^3 is zero
+/// assert!(find_root(&|x: f64| x*x*x, -1f64, 1f64, 1e-8f64).abs() < 1e-8f64);
+/// ```
 pub fn find_root<T: UnivariateFn>(f: &T, min: f64, max: f64, acc: f64) -> f64 {
+	// This implementation uses
+	// Brent's method for root-finding.
+	// In short, we use either reverse-quadratic
+	// interpolation or the secant method, depending
+	// on how quickly each method converges. Typical
+	// performance is super-linear convergence.
+
 	assert!(acc > 0f64);
-	let mut fa = f.eval(min);
+	let fa = f.eval(min);
 	let mut fb = f.eval(max);
 
 	// f(a) and f(b) must have opposite signs
@@ -330,7 +353,7 @@ pub fn find_root<T: UnivariateFn>(f: &T, min: f64, max: f64, acc: f64) -> f64 {
 
 	let (mut a, mut b) = (min, max);
 	if fa.abs() < fb.abs() {
-		(a, b) = (b, a);
+		swap!(a, b);
 	}
 	let mut s = 0f64;
 	let mut d = a;
@@ -349,18 +372,19 @@ pub fn find_root<T: UnivariateFn>(f: &T, min: f64, max: f64, acc: f64) -> f64 {
 		} else {
 			flag = false;
 		}
-		(d, c) = (c, b);
+		d = c;
+		c = b;
 		if f.eval(a)*f.eval(s) < 0f64 {
 			b = s;
 		} else {
 			a = s;
 		}
 		if f.eval(a).abs() < f.eval(b).abs() {
-			(a, b) = (b, a);
+			swap!(a, b);
 		}
 	}
 	s
-}*/
+}
 
 #[cfg(test)]
 mod tests {
@@ -441,5 +465,12 @@ mod tests {
 	#[test]
 	fn test_infinite_integrals() {
 		test_infinite!(1f64);
+	}
+
+	#[test]
+	fn test_root_find() {
+		want!(find_root(&|x| x*x*x, -1f64, 1f64, 1e-7f64), 0f64);
+		want!(find_root(&|x| x*x*x, 1f64, -1f64, 1e-7f64), 0f64);
+		want!(find_root(&|x: f64| x.sin(), -1f64, 1f64, 1e-7f64), 0f64);
 	}
 }

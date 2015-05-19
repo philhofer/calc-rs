@@ -5,6 +5,100 @@
 use std::f64;
 use calculus::transform_bounds;	// for default cdf integral
 
+// returns (mean, sample variance)
+fn basic_stats(f: &[f64]) -> (f64, f64) {
+	let mut sum = 0f64;
+	for x in f.iter() {
+		sum += *x;
+	}
+	let mn = sum/(f.len() as f64);
+	let mut sqdist = 0f64;
+	for x in f.iter() {
+		let dist = x - mn;
+		sqdist += dist*dist;
+	}
+	(mn, sqdist/((f.len()-1) as f64))
+}
+
+/// TestResult is the result of a 
+/// statistical test, such as a 
+/// T-test or KS-test. It contains
+/// both the p-stat and t-stat.
+pub struct TTestResult{pub p: f64, pub t: f64}
+
+impl TTestResult {
+	pub fn is_significant(&self) -> bool {
+		self.is_significant_at(0.05f64)
+	}
+
+	pub fn is_significant_at(&self, lvl: f64) -> bool {
+		self.p < lvl
+	}
+}
+
+/// Welch's 2-sample T-test
+pub fn welchs_t_test(a: &[f64], b: &[f64]) -> TTestResult {
+	let (mna, vna) = basic_stats(a);
+	let (mnb, vnb) = basic_stats(b);
+	let (sa, sb) = (vna / (a.len() as f64), vnb / (b.len() as f64));
+	let ssum = sa+sb;
+	let s = ssum.sqrt();
+	let t = (mna - mnb).abs() / s;
+	let df = ssum*ssum / ((sa*sa)/((a.len()-1) as f64) + (sb*sb)/((b.len()-1) as f64));
+	let p = (1f64 - StudentT{nu: df}.cdf(t)) * 2f64;
+	TTestResult{p: p, t: t}
+}
+
+/// 1-sample T-test
+pub fn t_test(xbar: f64, dist: &[f64]) -> TTestResult {
+	let (mean, varn) = basic_stats(dist);
+	let stdev = varn.sqrt();
+	let diff = (mean-xbar).abs();
+	let t = diff / (stdev / (dist.len() as f64).sqrt());
+	let df = (dist.len()-1) as f64;
+	let p = (1f64 - StudentT{nu: df}.cdf(t)) * 2f64;
+	TTestResult{p: p, t: t}
+}
+
+/// Kolmogorov-Smirnov test result
+pub struct KSTestResult {
+	pub p: f64,
+	pub d: f64,
+}
+
+impl KSTestResult {
+	pub fn is_significant(&self) -> bool {
+		self.is_significant_at(0.05f64)
+	}
+	pub fn is_significant_at(&self, lvl: f64) -> bool {
+		self.p < lvl
+	}
+}
+
+/// 1-sample Kolmogorov-Smirnov Test
+///
+/// The KS test is a robust non-parametric test to determine
+/// whether or not a sample is distributed identically to
+/// another distribution. In the case of the 1-sample KS test,
+/// one distribution is known, and the other is tested against it.
+/// 
+/// The `samp` argument *must* be sorted in increasing order.
+pub fn ks_test_1s<T: Distribution>(samp: &[f64], dist: &T) -> KSTestResult {
+	let samp_sum = samp.iter().fold(0f64, |acc, val| acc + val);
+	let mut sum = 0f64;
+	let ne = (samp.len() as f64).sqrt();
+	let mut max_d = 0f64; // supremum of |CDF(x) - ECDF(x)|
+	for &x in samp.iter() {
+		sum += x;
+		let d = (dist.cdf(x) - sum/samp_sum).abs();
+		if d > max_d {
+			max_d = d;
+		}
+	}
+	let p = KolmogorovSmirnov.cdf(max_d * ne) + 0.12f64 + 0.11f64/ne;
+	KSTestResult{p: p, d: max_d}
+}
+
 /// `Distribution` is a univariate
 /// continuous distribution.
 pub trait Distribution {
@@ -12,6 +106,7 @@ pub trait Distribution {
 	fn pdf(&self, x: f64) -> f64;
 
 	/// Cumulative density function.
+	///
 	/// By default, `cdf` is implemented
 	/// by integrating `pdf` from `f64::NEG_INFINITY`
 	/// to `x`. Typically, there a more precise
@@ -38,6 +133,7 @@ impl Distribution for Gaussian {
 		let dist = (-(diff*diff)/(2f64*self.stdev*self.stdev)).exp();
 		scale / dist
 	}
+
 	fn cdf(&self, x: f64) -> f64 {
 		0.5f64 * (1f64 + erf((x - self.mean)/(f64::consts::SQRT_2 * self.stdev)))
 	}
@@ -79,12 +175,8 @@ pub struct StudentT {
 
 impl Distribution for StudentT {
 	fn pdf(&self, x: f64) -> f64 {
-		if x == f64::INFINITY {
-			1.0f64
-		} else {
-			let sq = (x*x)/self.nu + 1f64;
-			(self.nu.sqrt() * beta(0.5f64, self.nu/2f64) * sq * sq).recip()
-		}
+		let sq = (x*x)/self.nu + 1f64;
+		(self.nu.sqrt() * beta(0.5f64, self.nu/2f64) * sq * sq).recip()
 	}
 
 	fn cdf(&self, t: f64) -> f64 {
@@ -103,11 +195,56 @@ impl Distribution for StudentT {
 	}
 }
 
+/// Gamma Distribution
+#[derive(Copy, Clone, PartialEq)]
+pub struct GammaDist {
+	pub alpha: f64,
+	pub beta: f64
+}
+
+impl Distribution for GammaDist {
+	fn pdf(&self, x: f64) -> f64 {
+		if x <= 0f64 {
+			return 0f64;
+		}
+		let lg = ln_gamma(self.alpha);
+		let log_p = (self.alpha * self.beta.ln()) + (self.alpha - 1f64)*x.ln() - x*self.beta - lg;
+		log_p.exp()
+	}
+
+	fn cdf(&self, x: f64) -> f64 {
+		if x <= 0f64 {
+			return 0f64;
+		} else if x == f64::INFINITY {
+			return 1f64;
+		}
+		comp_gamma(self.alpha, self.beta*x)
+	}
+}
+
+/// Chi-squared Distribution
+#[derive(Copy, Clone, PartialEq)]
+pub struct ChiSquaredDist {
+	pub v: u32,
+}
+
+impl Distribution for ChiSquaredDist {
+	#[inline]
+	fn pdf(&self, x: f64) -> f64 {
+		GammaDist{alpha: (self.v/2) as f64, beta: 0.5f64}.pdf(x)
+	}
+	#[inline]
+	fn cdf(&self, x: f64) -> f64 {
+		GammaDist{alpha: (self.v/2) as f64, beta: 0.5f64}.cdf(x)
+	}
+}
+
 /// Kolmogorov-Smirnov distribution
+#[derive(Copy, Clone)]
 pub struct KolmogorovSmirnov;
 
 impl Distribution for KolmogorovSmirnov {
-	fn pdf(&self, x: f64) -> f64 {
+	fn cdf(&self, x: f64) -> f64 {
 		match x {
 			f64::INFINITY => 1f64,
 			f64::NEG_INFINITY => 0f64,
@@ -127,8 +264,8 @@ impl Distribution for KolmogorovSmirnov {
 		}
 	}
 
-	fn cdf(&self, z: f64) -> f64 {
-		1f64 - self.pdf(z)
+	fn pdf(&self, z: f64) -> f64 {
+		1f64 - self.cdf(z)
 	}
 }
 
@@ -215,6 +352,16 @@ pub fn erfc(x: f64) -> f64 {
 	1f64 - erf(x)
 }
 
+fn ngamma_frac_num(a: f64, n: usize) -> f64 {
+	let n = n as f64;
+	-1f64 * n * (n-a)
+}
+
+fn ngamma_frac_denom(a: f64, x: f64, n: usize) -> f64 {
+	let n = (2*n + 1) as f64;
+	x + n - a
+}
+
 /// Normalized Gamma Function Q(a, z)
 ///
 /// The normalized Gamma function is mathematically
@@ -228,13 +375,38 @@ pub fn norm_gamma(a: f64, x: f64) -> f64 {
 		} else if a > 0f64 {
 			return 1f64;
 		}
-		return 1f64 / a.abs();
+		return a.abs().recip();
 	}
-	unimplemented!()
+	let b0 = x + 1f64 - a;
+	let mut c = 10e30f64;
+	let mut d = 10e-30f64;
+	if b0 == 0f64 {
+		d = 10e30f64;
+	}
+	let mut f = d;
+	for n in (1..1000) {
+		let an = ngamma_frac_num(a, n);
+		let bn = ngamma_frac_denom(a, x, n);
+		d = bn + an*d;
+		if d.abs() < 10e-20f64 {
+			d = 10e-30f64;
+		}
+		c = bn + an/c;
+		if c.abs() < 10e-20f64 {
+			c = 10e-30f64;
+		}
+		d = d.recip();
+		let del = d*c;
+		f *= del;
+		if (del-1f64).abs()<10e-15f64 {
+			break;
+		}
+	}
+	f * (-x + a * x.ln() - ln_gamma(a)).exp()
 }
 
-/*
-/// Complementary Gamma Function
+
+/// Complementary Gamma Function P(a, z)
 ///
 /// The incomplete Gamma function is the complement
 /// of the gamma function. For non-negative real
@@ -257,7 +429,7 @@ pub fn upper_incomplete_gamma(a: f64, x: f64) -> f64 {
 /// [Lower Incomplete Gamma Function](https://en.wikipedia.org/wiki/Incomplete_gamma_function)
 pub fn lower_incomplete_gamma(a: f64, x: f64) -> f64 {
 	x.powf(-a) * comp_gamma(a, x)
-}*/
+}
 
 /// [Beta Function](https://en.wikipedia.org/wiki/Beta_function)
 pub fn beta(z: f64, w: f64) -> f64 {
@@ -295,6 +467,7 @@ pub fn incomplete_beta(z: f64, a: f64, b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use calculus::transform_bounds;
 	use std::f64;
 	fn poly2(x: f64, a: f64, b: f64) -> f64 {
 		x.mul_add(b, a)
@@ -336,6 +509,17 @@ mod tests {
 		};
 	}
 
+	macro_rules! test_distribution_invariants {
+		($a:expr) => {{
+			// cdf at infinity should be 1
+			assert_eq!($a.cdf(f64::INFINITY), 1f64);
+			// cdf at -infinity should be 0
+			assert_eq!($a.cdf(f64::NEG_INFINITY), 0f64);
+			// integral of pdf on (-infinity, infinity) should be 1
+			want!(transform_bounds(&|x| $a.pdf(x)).quad_slow(f64::NEG_INFINITY, f64::INFINITY), 1f64, 1e-6f64);
+		}};
+	}
+
 	#[test]
 	fn test_erf() {
 		assert_eq!(erf(0f64), 0f64);
@@ -373,5 +557,47 @@ mod tests {
 		want!(incomplete_beta(2f64, 1f64, 1f64), 2f64, 1e-7f64);
 		want!(incomplete_beta(2f64, 0.5f64, 2f64), 0.9428090415f64, 1e-7f64);
 		want!(incomplete_beta(1f64, 0.5f64, 0.5f64), f64::consts::PI, 1e-7f64);
+	}
+
+	#[test]
+	fn test_norm_gamma() {
+		want!(comp_gamma(0.5f64, 0.5f64), 0.8862269254f64, 1e-7f64);
+		want!(comp_gamma(1.5f64, 0.5f64), 1.3293403881f64, 1e-7f64);
+	}
+
+	#[test]
+	fn test_gaussian() {
+		test_distribution_invariants!(UNIT_NORMAL);
+		let v = Gaussian{mean: 3f64, stdev: 5f64};
+		test_distribution_invariants!(v);
+	}
+
+	#[test]
+	fn test_exponential_dist() {
+		let v = Exponential{lambda: 1f64};
+		test_distribution_invariants!(v);
+	}
+
+	#[test]
+	fn test_studentt_dist() {
+		let v = StudentT{nu: 3.5f64};
+		test_distribution_invariants!(v);
+	}
+
+	#[test]
+	fn test_kolmogorov_smirnov_dist() {
+		test_distribution_invariants!(KolmogorovSmirnov);
+	}
+
+	#[test]
+	fn test_gamma_dist() {
+		let v = GammaDist{alpha: 0.5f64, beta: 1.5f64};
+		test_distribution_invariants!(v);
+	}
+
+	#[test]
+	fn test_chi_squared_dist() {
+		let v = ChiSquaredDist{v: 8};
+		test_distribution_invariants!(v);
 	}
 }
